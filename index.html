@@ -1,0 +1,1518 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MSBTuner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Bebas+Neue&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --cyan: #00f5ff;
+        --magenta: #ff00aa;
+        --amber: #ffb400;
+        --green: #00ff88;
+        --bg: #0a0a0b;
+        --surface: #111113;
+        --surface2: #18181c;
+        --border: #242428;
+        --text: #e8e8ec;
+        --muted: #555560;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: "Space Mono", monospace;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      /* Scanline overlay */
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 2px,
+          rgba(0, 0, 0, 0.08) 2px,
+          rgba(0, 0, 0, 0.08) 4px
+        );
+        pointer-events: none;
+        z-index: 9999;
+      }
+
+      .brand {
+        font-family: "Bebas Neue", sans-serif;
+        letter-spacing: 0.15em;
+      }
+
+      /* Glow effects */
+      .glow-cyan {
+        text-shadow:
+          0 0 12px var(--cyan),
+          0 0 40px rgba(0, 245, 255, 0.3);
+      }
+      .glow-mag {
+        text-shadow:
+          0 0 12px var(--magenta),
+          0 0 40px rgba(255, 0, 170, 0.3);
+      }
+      .glow-amber {
+        text-shadow:
+          0 0 12px var(--amber),
+          0 0 40px rgba(255, 180, 0, 0.3);
+      }
+      .glow-green {
+        text-shadow:
+          0 0 12px var(--green),
+          0 0 40px rgba(0, 255, 136, 0.3);
+      }
+
+      .border-glow-cyan {
+        box-shadow:
+          0 0 0 1px var(--cyan),
+          0 0 20px rgba(0, 245, 255, 0.15);
+      }
+      .border-glow-mag {
+        box-shadow:
+          0 0 0 1px var(--magenta),
+          0 0 20px rgba(255, 0, 170, 0.15);
+      }
+      .border-glow-green {
+        box-shadow:
+          0 0 0 1px var(--green),
+          0 0 20px rgba(0, 255, 136, 0.2);
+      }
+
+      /* Spectrogram canvas */
+      #spectrogram {
+        width: 100%;
+        height: 180px;
+        display: block;
+        image-rendering: pixelated;
+      }
+
+      /* Needle gauge */
+      .gauge-wrap {
+        position: relative;
+        width: 100%;
+        max-width: 480px;
+        margin: 0 auto;
+      }
+
+      #gauge-canvas {
+        width: 100%;
+        display: block;
+      }
+
+      /* Note string buttons */
+      .string-btn {
+        position: relative;
+        border: 1px solid var(--border);
+        background: var(--surface2);
+        color: var(--muted);
+        padding: 6px 4px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s;
+        font-family: "Space Mono", monospace;
+        font-size: 11px;
+        text-align: center;
+      }
+      .string-btn:hover {
+        border-color: var(--cyan);
+        color: var(--cyan);
+      }
+      .string-btn.active {
+        background: rgba(0, 245, 255, 0.08);
+        border-color: var(--cyan);
+        color: var(--cyan);
+        box-shadow: 0 0 12px rgba(0, 245, 255, 0.2);
+      }
+      .string-btn .snum {
+        display: block;
+        font-size: 9px;
+        color: var(--muted);
+        margin-bottom: 2px;
+      }
+      .string-btn.active .snum {
+        color: rgba(0, 245, 255, 0.5);
+      }
+
+      /* Note display */
+      #note-display {
+        font-family: "Bebas Neue", sans-serif;
+        font-size: 96px;
+        line-height: 1;
+        letter-spacing: 0.05em;
+        transition: color 0.1s;
+      }
+
+      /* Cents bar */
+      #cents-bar-fill {
+        transition:
+          width 0.05s,
+          background 0.1s;
+        height: 100%;
+        border-radius: 2px;
+      }
+
+      /* Freq display */
+      #freq-display {
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.08em;
+      }
+
+      /* Custom tuning modal */
+      #modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.8);
+        backdrop-filter: blur(4px);
+        z-index: 100;
+        align-items: center;
+        justify-content: center;
+      }
+      #modal-overlay.open {
+        display: flex;
+      }
+      #modal-box {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 28px;
+        width: 360px;
+        max-width: 95vw;
+        box-shadow:
+          0 0 60px rgba(0, 0, 0, 0.8),
+          0 0 0 1px rgba(255, 0, 170, 0.2);
+      }
+      .tuning-input {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-family: "Space Mono", monospace;
+        font-size: 13px;
+        width: 100%;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .tuning-input:focus {
+        border-color: var(--magenta);
+      }
+      .tuning-name-input {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 4px;
+        padding: 8px 12px;
+        font-family: "Space Mono", monospace;
+        font-size: 13px;
+        width: 100%;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .tuning-name-input:focus {
+        border-color: var(--magenta);
+      }
+
+      .saved-tuning-btn {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-family: "Space Mono", monospace;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .saved-tuning-btn:hover {
+        border-color: var(--magenta);
+        color: var(--magenta);
+      }
+      .saved-tuning-btn.active {
+        border-color: var(--green);
+        color: var(--green);
+        background: rgba(0, 255, 136, 0.05);
+      }
+
+      .del-btn {
+        color: var(--muted);
+        cursor: pointer;
+        padding: 0 4px;
+        font-size: 14px;
+        line-height: 1;
+        transition: color 0.15s;
+      }
+      .del-btn:hover {
+        color: var(--magenta);
+      }
+
+      /* Tuning selector pill */
+      #tuning-label {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 4px 14px;
+        transition: all 0.15s;
+        background: var(--surface2);
+      }
+      #tuning-label:hover {
+        border-color: var(--magenta);
+        color: var(--magenta);
+      }
+
+      /* Start button */
+      #start-btn {
+        font-family: "Bebas Neue", sans-serif;
+        letter-spacing: 0.15em;
+        font-size: 18px;
+        padding: 10px 40px;
+        border-radius: 4px;
+        background: transparent;
+        border: 1px solid var(--cyan);
+        color: var(--cyan);
+        cursor: pointer;
+        transition: all 0.2s;
+        position: relative;
+        overflow: hidden;
+      }
+      #start-btn::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--cyan);
+        opacity: 0;
+        transition: opacity 0.2s;
+      }
+      #start-btn:hover::before {
+        opacity: 0.1;
+      }
+      #start-btn:hover {
+        box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
+      }
+      #start-btn.active {
+        border-color: var(--magenta);
+        color: var(--magenta);
+      }
+      #start-btn.active:hover {
+        box-shadow: 0 0 20px rgba(255, 0, 170, 0.3);
+      }
+
+      /* Tuner status dot */
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--muted);
+        transition:
+          background 0.2s,
+          box-shadow 0.2s;
+      }
+      .status-dot.on {
+        background: var(--green);
+        box-shadow: 0 0 8px var(--green);
+        animation: pulse-dot 1.5s ease-in-out infinite;
+      }
+      @keyframes pulse-dot {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.4;
+        }
+      }
+
+      /* Frequency range indicators */
+      .range-bar-wrap {
+        position: relative;
+        height: 24px;
+        background: var(--surface2);
+        border-radius: 2px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+      }
+      .range-bar-marker {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+      .range-bar-label {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 10px;
+        font-family: "Space Mono", monospace;
+        white-space: nowrap;
+      }
+
+      /* Modal btn */
+      .modal-btn {
+        font-family: "Space Mono", monospace;
+        font-size: 12px;
+        padding: 8px 18px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s;
+        border: 1px solid;
+      }
+      .modal-btn-primary {
+        background: rgba(255, 0, 170, 0.1);
+        border-color: var(--magenta);
+        color: var(--magenta);
+      }
+      .modal-btn-primary:hover {
+        background: rgba(255, 0, 170, 0.2);
+      }
+      .modal-btn-secondary {
+        background: transparent;
+        border-color: var(--border);
+        color: var(--muted);
+      }
+      .modal-btn-secondary:hover {
+        border-color: var(--text);
+        color: var(--text);
+      }
+
+      /* scrollbar */
+      ::-webkit-scrollbar {
+        width: 4px;
+      }
+      ::-webkit-scrollbar-track {
+        background: var(--bg);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ══════════ HEADER ══════════ -->
+    <header
+      class="flex items-center justify-between px-6 py-4 border-b"
+      style="border-color: var(--border)"
+    >
+      <div class="flex items-center gap-4">
+        <span class="brand text-3xl glow-cyan" style="color: var(--cyan)"
+          >MSBTuner</span
+        >
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="status-dot" id="status-dot"></div>
+        <button id="start-btn" onclick="toggleMic()">START TUNER</button>
+      </div>
+    </header>
+
+    <!-- ══════════ MAIN ══════════ -->
+    <main class="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <!-- SPECTROGRAM -->
+      <section>
+        <div class="flex items-center justify-between mb-2">
+          <span
+            style="font-size: 10px; letter-spacing: 0.15em; color: var(--muted)"
+            >FREQUENCY SPECTRUM</span
+          >
+          <span id="freq-display" style="font-size: 11px; color: var(--cyan)"
+            >— Hz</span
+          >
+        </div>
+        <div
+          style="
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            background: var(--bg);
+          "
+        >
+          <canvas id="spectrogram"></canvas>
+        </div>
+        <!-- Frequency axis labels -->
+        <div
+          class="flex justify-between mt-1"
+          style="font-size: 9px; color: var(--muted); letter-spacing: 0.08em"
+        >
+          <span>20Hz</span><span>100Hz</span><span>500Hz</span><span>1kHz</span
+          ><span>5kHz</span><span>20kHz</span>
+        </div>
+      </section>
+
+      <!-- NOTE DETECTOR + GAUGE -->
+      <div class="grid gap-6" style="grid-template-columns: 1fr 1fr">
+        <!-- LEFT: Note + Gauge -->
+        <section
+          style="
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+          "
+        >
+          <div class="flex items-start justify-between mb-2">
+            <span
+              style="
+                font-size: 10px;
+                letter-spacing: 0.15em;
+                color: var(--muted);
+              "
+              >DETECTED NOTE</span
+            >
+            <span
+              id="octave-display"
+              style="font-size: 11px; color: var(--muted)"
+              >OCT —</span
+            >
+          </div>
+
+          <!-- Note name + cents indicator -->
+          <div class="flex items-end gap-3 mb-4">
+            <div id="note-display" style="color: var(--muted)">—</div>
+            <div style="margin-bottom: 14px">
+              <div
+                id="cents-text"
+                style="
+                  font-size: 22px;
+                  font-family: &quot;Bebas Neue&quot;, sans-serif;
+                  letter-spacing: 0.08em;
+                  color: var(--muted);
+                "
+              >
+                ±0¢
+              </div>
+            </div>
+          </div>
+
+          <!-- Cents bar -->
+          <div class="mb-5">
+            <div
+              style="
+                height: 6px;
+                background: var(--surface2);
+                border-radius: 3px;
+                overflow: hidden;
+                border: 1px solid var(--border);
+                position: relative;
+              "
+            >
+              <!-- center tick -->
+              <div
+                style="
+                  position: absolute;
+                  left: 50%;
+                  top: 0;
+                  bottom: 0;
+                  width: 1px;
+                  background: var(--border);
+                  z-index: 1;
+                "
+              ></div>
+              <div
+                id="cents-bar-fill"
+                style="
+                  position: absolute;
+                  height: 100%;
+                  width: 2px;
+                  left: 50%;
+                  background: var(--muted);
+                  transform: translateX(-50%);
+                  border-radius: 2px;
+                "
+              ></div>
+            </div>
+            <div
+              class="flex justify-between mt-1"
+              style="font-size: 9px; color: var(--muted)"
+            >
+              <span>-50¢</span><span>FLAT</span><span>IN TUNE</span
+              ><span>SHARP</span><span>+50¢</span>
+            </div>
+          </div>
+
+          <!-- Gauge canvas -->
+          <div class="gauge-wrap">
+            <canvas id="gauge-canvas" height="120"></canvas>
+          </div>
+
+          <!-- Target frequency -->
+          <div
+            class="text-center mt-3"
+            style="font-size: 11px; color: var(--muted)"
+          >
+            TARGET <span id="target-freq" style="color: var(--amber)">—</span>
+          </div>
+        </section>
+
+        <!-- RIGHT: String selector + tuning -->
+        <section
+          style="
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+          "
+        >
+          <div class="flex items-center justify-between mb-4">
+            <span
+              style="
+                font-size: 10px;
+                letter-spacing: 0.15em;
+                color: var(--muted);
+              "
+              >TUNING</span
+            >
+            <button
+              id="tuning-label"
+              onclick="openModal()"
+              style="color: var(--muted)"
+            >
+              Standard E
+            </button>
+          </div>
+
+          <!-- String buttons -->
+          <div
+            id="string-grid"
+            class="grid gap-2 mb-6"
+            style="grid-template-columns: repeat(6, 1fr)"
+          ></div>
+
+          <!-- Divider -->
+          <div
+            style="border-top: 1px solid var(--border); margin: 16px 0"
+          ></div>
+
+          <!-- Auto/Manual toggle -->
+          <div class="flex items-center justify-between mb-4">
+            <span
+              style="
+                font-size: 10px;
+                letter-spacing: 0.12em;
+                color: var(--muted);
+              "
+              >DETECTION MODE</span
+            >
+            <div class="flex gap-2">
+              <button
+                id="btn-auto"
+                onclick="setMode('auto')"
+                class="modal-btn modal-btn-primary"
+                style="padding: 4px 12px; font-size: 11px"
+              >
+                AUTO
+              </button>
+              <button
+                id="btn-manual"
+                onclick="setMode('manual')"
+                class="modal-btn modal-btn-secondary"
+                style="padding: 4px 12px; font-size: 11px"
+              >
+                STRING
+              </button>
+            </div>
+          </div>
+
+          <!-- Note range display -->
+          <div class="space-y-1" id="note-ranges"></div>
+        </section>
+      </div>
+
+      <!-- FREQUENCY RANGE INDICATORS (full-width) -->
+      <section
+        style="
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 20px;
+        "
+      >
+        <div
+          class="mb-3"
+          style="font-size: 10px; letter-spacing: 0.15em; color: var(--muted)"
+        >
+          STRING FREQUENCY MAP
+        </div>
+        <div id="freq-map" class="space-y-2"></div>
+      </section>
+    </main>
+
+    <!-- ══════════ MODAL ══════════ -->
+    <div id="modal-overlay" onclick="closeModalOutside(event)">
+      <div id="modal-box">
+        <div class="flex items-center justify-between mb-5">
+          <span class="brand text-xl" style="color: var(--magenta)"
+            >CUSTOM TUNING</span
+          >
+          <button
+            onclick="closeModal()"
+            style="
+              color: var(--muted);
+              background: none;
+              border: none;
+              cursor: pointer;
+              font-size: 18px;
+            "
+          >
+            ✕
+          </button>
+        </div>
+
+        <!-- Saved tunings -->
+        <div class="mb-5">
+          <div
+            style="
+              font-size: 10px;
+              letter-spacing: 0.12em;
+              color: var(--muted);
+              margin-bottom: 8px;
+            "
+          >
+            SAVED TUNINGS
+          </div>
+          <div
+            id="saved-tunings-list"
+            class="space-y-1 max-h-36 overflow-y-auto pr-1"
+          ></div>
+        </div>
+
+        <div style="border-top: 1px solid var(--border); margin: 16px 0"></div>
+
+        <!-- New tuning editor -->
+        <div
+          style="
+            font-size: 10px;
+            letter-spacing: 0.12em;
+            color: var(--muted);
+            margin-bottom: 10px;
+          "
+        >
+          NEW TUNING (6 strings, low→high)
+        </div>
+        <input
+          class="tuning-name-input mb-3"
+          id="new-tuning-name"
+          placeholder="Tuning name (e.g. Drop D)"
+        />
+        <div
+          id="new-tuning-inputs"
+          class="grid gap-2 mb-4"
+          style="grid-template-columns: repeat(6, 1fr)"
+        ></div>
+        <div class="flex gap-2 justify-end">
+          <button class="modal-btn modal-btn-secondary" onclick="closeModal()">
+            CANCEL
+          </button>
+          <button class="modal-btn modal-btn-primary" onclick="saveNewTuning()">
+            SAVE TUNING
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ═══════════════════════════════════════
+      // DATA
+      // ═══════════════════════════════════════
+
+      const NOTE_NAMES = [
+        "C",
+        "C#",
+        "D",
+        "D#",
+        "E",
+        "F",
+        "F#",
+        "G",
+        "G#",
+        "A",
+        "A#",
+        "B",
+      ];
+
+      const DEFAULT_TUNINGS = [
+        { name: "Standard E", notes: ["E2", "A2", "D3", "G3", "B3", "E4"] },
+        { name: "Drop D", notes: ["D2", "A2", "D3", "G3", "B3", "E4"] },
+        { name: "Open G", notes: ["D2", "G2", "D3", "G3", "B3", "D4"] },
+        { name: "Open D", notes: ["D2", "A2", "D3", "F#3", "A3", "D4"] },
+        { name: "DADGAD", notes: ["D2", "A2", "D3", "G3", "A3", "D4"] },
+        {
+          name: "Half Step ↓",
+          notes: ["D#2", "G#2", "C#3", "F#3", "A#3", "D#4"],
+        },
+        { name: "Full Step ↓", notes: ["D2", "G2", "C3", "F3", "A3", "D4"] },
+      ];
+
+      function noteToFreq(note) {
+        const m = note.match(/^([A-G]#?)(\d)$/);
+        if (!m) return 440;
+        const ni = NOTE_NAMES.indexOf(m[1]);
+        const oct = parseInt(m[2]);
+        const midi = (oct + 1) * 12 + ni;
+        return 440 * Math.pow(2, (midi - 69) / 12);
+      }
+
+      function freqToNote(freq) {
+        if (!freq || freq < 20) return null;
+        const midi = 12 * Math.log2(freq / 440) + 69;
+        const rounded = Math.round(midi);
+        const cents = (midi - rounded) * 100;
+        const ni = ((rounded % 12) + 12) % 12;
+        const oct = Math.floor(rounded / 12) - 1;
+        return { name: NOTE_NAMES[ni], octave: oct, cents, midi: rounded };
+      }
+
+      // ═══════════════════════════════════════
+      // STATE
+      // ═══════════════════════════════════════
+
+      let audioCtx = null,
+        analyser = null,
+        stream = null;
+      let animFrame = null;
+      let isRunning = false;
+      let detectionMode = "auto"; // 'auto' | 'manual'
+      let selectedString = 0;
+      let currentTuning = DEFAULT_TUNINGS[0];
+      let savedTunings = [];
+
+      // Spectrogram history
+      const SPEC_HISTORY = [];
+      const SPEC_ROWS = 180;
+
+      // Gauge state (smoothed)
+      let smoothCents = 0;
+      let smoothFreq = 0;
+
+      // ═══════════════════════════════════════
+      // LOCALSTORAGE
+      // ═══════════════════════════════════════
+
+      function loadSaved() {
+        try {
+          const raw = localStorage.getItem("strum_tunings");
+          if (raw) savedTunings = JSON.parse(raw);
+        } catch {
+          savedTunings = [];
+        }
+      }
+
+      function persistSaved() {
+        localStorage.setItem("strum_tunings", JSON.stringify(savedTunings));
+      }
+
+      function loadActiveTuning() {
+        try {
+          const raw = localStorage.getItem("strum_active_tuning");
+          if (raw) {
+            const t = JSON.parse(raw);
+            // find in defaults or saved
+            const all = getAllTunings();
+            const found = all.find((x) => x.name === t.name);
+            if (found) currentTuning = found;
+            else currentTuning = t; // custom
+          }
+        } catch {}
+      }
+
+      function persistActiveTuning() {
+        localStorage.setItem(
+          "strum_active_tuning",
+          JSON.stringify(currentTuning),
+        );
+      }
+
+      function getAllTunings() {
+        return [...DEFAULT_TUNINGS, ...savedTunings];
+      }
+
+      // ═══════════════════════════════════════
+      // MIC + AUDIO
+      // ═══════════════════════════════════════
+
+      async function toggleMic() {
+        if (isRunning) {
+          stopMic();
+        } else {
+          await startMic();
+        }
+      }
+
+      async function startMic() {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false,
+          });
+          audioCtx = new AudioContext();
+          const src = audioCtx.createMediaStreamSource(stream);
+          analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 8192;
+          analyser.smoothingTimeConstant = 0.7;
+          src.connect(analyser);
+          isRunning = true;
+          document.getElementById("start-btn").textContent = "STOP TUNER";
+          document.getElementById("start-btn").classList.add("active");
+          document.getElementById("status-dot").classList.add("on");
+          loop();
+        } catch (e) {
+          alert("Microphone access denied or not available.");
+        }
+      }
+
+      function stopMic() {
+        isRunning = false;
+        if (animFrame) cancelAnimationFrame(animFrame);
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        if (audioCtx) audioCtx.close();
+        audioCtx = analyser = stream = null;
+        document.getElementById("start-btn").textContent = "START TUNER";
+        document.getElementById("start-btn").classList.remove("active");
+        document.getElementById("status-dot").classList.remove("on");
+        resetDisplay();
+      }
+
+      // ═══════════════════════════════════════
+      // PITCH DETECTION (autocorrelation)
+      // ═══════════════════════════════════════
+
+      function detectPitch(buf, sampleRate) {
+        const SIZE = buf.length;
+        const MAX_SAMPLES = Math.floor(SIZE / 2);
+        let bestOffset = -1,
+          bestCorr = 0;
+        let lastCorr = 1,
+          foundGoodCorr = false;
+        const rmsThreshold = 0.015;
+
+        // RMS check
+        let rms = 0;
+        for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+        rms = Math.sqrt(rms / SIZE);
+        if (rms < rmsThreshold) return -1;
+
+        for (let offset = 0; offset < MAX_SAMPLES; offset++) {
+          let corr = 0;
+          for (let i = 0; i < MAX_SAMPLES; i++)
+            corr += buf[i] * buf[i + offset];
+          corr = (2 * corr) / (SIZE - offset);
+          if (corr > 0.9 && corr > lastCorr) {
+            foundGoodCorr = true;
+          } else if (foundGoodCorr && corr < lastCorr) {
+            if (corr > bestCorr) {
+              bestCorr = corr;
+              bestOffset = offset;
+            }
+            if (lastCorr > 0.98) break;
+          }
+          lastCorr = corr;
+        }
+
+        if (bestOffset === -1) return -1;
+        // Parabolic interpolation
+        const y1 = bestOffset > 0 ? 0 : 0;
+        const y2 = bestCorr;
+        const y3 = bestOffset + 1 < MAX_SAMPLES ? 0 : 0;
+        return sampleRate / bestOffset;
+      }
+
+      // ═══════════════════════════════════════
+      // MAIN LOOP
+      // ═══════════════════════════════════════
+
+      function loop() {
+        if (!isRunning) return;
+        animFrame = requestAnimationFrame(loop);
+
+        const bufLen = analyser.fftSize;
+        const timeBuf = new Float32Array(bufLen);
+        analyser.getFloatTimeDomainData(timeBuf);
+
+        const freqBinCount = analyser.frequencyBinCount;
+        const freqBuf = new Uint8Array(freqBinCount);
+        analyser.getByteFrequencyData(freqBuf);
+
+        // Pitch detection
+        const freq = detectPitch(timeBuf, audioCtx.sampleRate);
+
+        // Smooth freq
+        if (freq > 20) {
+          smoothFreq =
+            smoothFreq === 0 ? freq : smoothFreq * 0.85 + freq * 0.15;
+        }
+
+        // Find closest note
+        let targetNote = null,
+          targetFreq = null,
+          cents = 0;
+
+        if (detectionMode === "manual") {
+          const noteStr = currentTuning.notes[selectedString];
+          targetFreq = noteToFreq(noteStr);
+          const m = noteStr.match(/^([A-G]#?)(\d)$/);
+          targetNote = { name: m[1], octave: parseInt(m[2]) };
+          if (freq > 20) {
+            cents = 1200 * Math.log2(smoothFreq / targetFreq);
+            cents = Math.max(-50, Math.min(50, cents));
+          }
+        } else {
+          // Auto: find closest note in current tuning
+          if (freq > 20) {
+            const det = freqToNote(smoothFreq);
+            if (det) {
+              targetNote = det;
+              cents = det.cents;
+              targetFreq = 440 * Math.pow(2, (det.midi - 69) / 12);
+            }
+          }
+        }
+
+        smoothCents = smoothCents * 0.8 + (cents || 0) * 0.2;
+
+        // Update display
+        updateNoteDisplay(targetNote, smoothCents, smoothFreq, targetFreq);
+
+        // Draw spectrogram
+        drawSpectrogram(freqBuf, analyser.sampleRate || 44100, freqBinCount);
+
+        // Draw gauge
+        drawGauge(smoothCents);
+      }
+
+      // ═══════════════════════════════════════
+      // DISPLAY
+      // ═══════════════════════════════════════
+
+      function resetDisplay() {
+        document.getElementById("note-display").textContent = "—";
+        document.getElementById("note-display").style.color = "var(--muted)";
+        document.getElementById("cents-text").textContent = "±0¢";
+        document.getElementById("cents-text").style.color = "var(--muted)";
+        document.getElementById("freq-display").textContent = "— Hz";
+        document.getElementById("target-freq").textContent = "—";
+        document.getElementById("octave-display").textContent = "OCT —";
+        document.getElementById("cents-bar-fill").style.left = "50%";
+        document.getElementById("cents-bar-fill").style.background =
+          "var(--muted)";
+        drawGauge(0);
+      }
+
+      function updateNoteDisplay(note, cents, freq, targetFreq) {
+        const noteEl = document.getElementById("note-display");
+        const centsEl = document.getElementById("cents-text");
+        const freqEl = document.getElementById("freq-display");
+        const targetEl = document.getElementById("target-freq");
+        const octEl = document.getElementById("octave-display");
+        const barFill = document.getElementById("cents-bar-fill");
+
+        if (note && freq > 20) {
+          noteEl.textContent = note.name;
+          octEl.textContent = `OCT ${note.octave !== undefined ? note.octave : "—"}`;
+          freqEl.textContent = `${freq.toFixed(1)} Hz`;
+          if (targetFreq) targetEl.textContent = `${targetFreq.toFixed(2)} Hz`;
+
+          const absCents = Math.abs(cents);
+          let color;
+          if (absCents < 5) color = "var(--green)";
+          else if (absCents < 15) color = "var(--amber)";
+          else if (absCents < 30) color = "var(--cyan)";
+          else color = "var(--magenta)";
+
+          noteEl.style.color = color;
+          centsEl.style.color = color;
+          centsEl.textContent =
+            cents >= 0 ? `+${cents.toFixed(0)}¢` : `${cents.toFixed(0)}¢`;
+
+          // cents bar: -50 to +50 → 0% to 100%
+          const pct = 50 + (cents / 50) * 50;
+          barFill.style.left = `${Math.max(0, Math.min(100, pct))}%`;
+          barFill.style.background = color;
+          barFill.style.transform = "translateX(-50%)";
+        } else {
+          noteEl.textContent = "—";
+          noteEl.style.color = "var(--muted)";
+          centsEl.textContent = "±0¢";
+          centsEl.style.color = "var(--muted)";
+          freqEl.textContent = "— Hz";
+          targetEl.textContent = "—";
+          octEl.textContent = "OCT —";
+          barFill.style.left = "50%";
+          barFill.style.background = "var(--muted)";
+        }
+      }
+
+      // ═══════════════════════════════════════
+      // SPECTROGRAM
+      // ═══════════════════════════════════════
+
+      function drawSpectrogram(freqData, sampleRate, binCount) {
+        const canvas = document.getElementById("spectrogram");
+        const ctx = canvas.getContext("2d");
+        const W = canvas.offsetWidth;
+        const H = canvas.offsetHeight;
+        if (canvas.width !== W || canvas.height !== H) {
+          canvas.width = W;
+          canvas.height = H;
+        }
+
+        // Map frequency bins to log scale (20Hz–20kHz)
+        const minHz = 20,
+          maxHz = 20000;
+        const row = new Uint8Array(W);
+        const nyquist = sampleRate / 2;
+
+        for (let x = 0; x < W; x++) {
+          const t = x / W;
+          const hz = minHz * Math.pow(maxHz / minHz, t);
+          const bin = Math.round((hz / nyquist) * binCount);
+          row[x] = freqData[Math.min(bin, freqData.length - 1)];
+        }
+
+        SPEC_HISTORY.unshift(row);
+        if (SPEC_HISTORY.length > H) SPEC_HISTORY.pop();
+
+        // Draw scrolling waterfall
+        const imgData = ctx.createImageData(W, H);
+        for (let y = 0; y < SPEC_HISTORY.length; y++) {
+          const r = SPEC_HISTORY[y];
+          for (let x = 0; x < W; x++) {
+            const v = r[x] / 255;
+            const idx = (y * W + x) * 4;
+            // Color: dark purple → cyan → white
+            if (v < 0.33) {
+              imgData.data[idx] = (v / 0.33) * 40;
+              imgData.data[idx + 1] = 0;
+              imgData.data[idx + 2] = (v / 0.33) * 80;
+            } else if (v < 0.66) {
+              const t = (v - 0.33) / 0.33;
+              imgData.data[idx] = 40 + t * (-40 + 0);
+              imgData.data[idx + 1] = t * 245;
+              imgData.data[idx + 2] = 80 + t * (255 - 80);
+            } else {
+              const t = (v - 0.66) / 0.34;
+              imgData.data[idx] = t * 255;
+              imgData.data[idx + 1] = 245;
+              imgData.data[idx + 2] = 255;
+            }
+            imgData.data[idx + 3] = 255;
+          }
+        }
+        ctx.putImageData(imgData, 0, 0);
+
+        // Draw string frequency markers
+        if (currentTuning) {
+          currentTuning.notes.forEach((note, i) => {
+            const freq = noteToFreq(note);
+            if (freq < minHz || freq > maxHz) return;
+            const x = Math.round(
+              (W * Math.log(freq / minHz)) / Math.log(maxHz / minHz),
+            );
+            const colors = [
+              "#ff00aa",
+              "#ff6b00",
+              "#ffb400",
+              "#00f5ff",
+              "#00ff88",
+              "#a040ff",
+            ];
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, H);
+            ctx.strokeStyle = colors[i % colors.length];
+            ctx.globalAlpha =
+              detectionMode === "manual" && i === selectedString ? 0.9 : 0.35;
+            ctx.lineWidth =
+              detectionMode === "manual" && i === selectedString ? 2 : 1;
+            ctx.setLineDash([4, 4]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1;
+            // label
+            ctx.fillStyle = colors[i % colors.length];
+            ctx.globalAlpha =
+              detectionMode === "manual" && i === selectedString ? 0.9 : 0.4;
+            ctx.font = "9px Space Mono, monospace";
+            ctx.fillText(note, x + 3, H - 4);
+            ctx.globalAlpha = 1;
+          });
+        }
+      }
+
+      // ═══════════════════════════════════════
+      // GAUGE
+      // ═══════════════════════════════════════
+
+      function drawGauge(cents) {
+        const canvas = document.getElementById("gauge-canvas");
+        const ctx = canvas.getContext("2d");
+        const W = canvas.offsetWidth || 400;
+        const H = 120;
+        canvas.width = W;
+        canvas.height = H;
+
+        const cx = W / 2,
+          cy = H + 20;
+        const r = H - 10;
+
+        ctx.clearRect(0, 0, W, H);
+
+        // Arc background
+        const startAngle = Math.PI + 0.3;
+        const endAngle = -0.3;
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, startAngle, endAngle);
+        ctx.strokeStyle = "#242428";
+        ctx.lineWidth = 8;
+        ctx.lineCap = "round";
+        ctx.stroke();
+
+        // Colored arc segments
+        const segments = [
+          { from: -50, to: -15, color: "#ff00aa" },
+          { from: -15, to: -5, color: "#ffb400" },
+          { from: -5, to: 5, color: "#00ff88" },
+          { from: 5, to: 15, color: "#ffb400" },
+          { from: 15, to: 50, color: "#00f5ff" },
+        ];
+
+        segments.forEach((seg) => {
+          const a1 = startAngle + ((seg.from + 50) / 100) * (Math.PI - 0.6);
+          const a2 = startAngle + ((seg.to + 50) / 100) * (Math.PI - 0.6);
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, a1, a2);
+          ctx.strokeStyle = seg.color;
+          ctx.lineWidth = 5;
+          ctx.globalAlpha = 0.35;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        });
+
+        // Tick marks
+        for (let c = -50; c <= 50; c += 5) {
+          const a = startAngle + ((c + 50) / 100) * (Math.PI - 0.6);
+          const isMajor = c % 25 === 0 || c === 0;
+          const tickLen = isMajor ? 12 : 7;
+          const inner = r - tickLen;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * (r + 2), cy + Math.sin(a) * (r + 2));
+          ctx.lineTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
+          ctx.strokeStyle = c === 0 ? "#00ff88" : "#333338";
+          ctx.lineWidth = isMajor ? 2 : 1;
+          ctx.stroke();
+        }
+
+        // Needle
+        const clampedCents = Math.max(-50, Math.min(50, cents));
+        const needleAngle =
+          startAngle + ((clampedCents + 50) / 100) * (Math.PI - 0.6);
+
+        const absCents = Math.abs(cents);
+        let needleColor;
+        if (absCents < 5) needleColor = "#00ff88";
+        else if (absCents < 15) needleColor = "#ffb400";
+        else if (absCents < 30) needleColor = "#00f5ff";
+        else needleColor = "#ff00aa";
+
+        // Needle glow
+        ctx.save();
+        ctx.shadowColor = needleColor;
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.moveTo(
+          cx + Math.cos(needleAngle) * (r - 15),
+          cy + Math.sin(needleAngle) * (r - 15),
+        );
+        ctx.lineTo(
+          cx - Math.cos(needleAngle) * 18,
+          cy - Math.sin(needleAngle) * 18,
+        );
+        ctx.strokeStyle = needleColor;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = "round";
+        ctx.stroke();
+        ctx.restore();
+
+        // Center pivot
+        ctx.beginPath();
+        ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+        ctx.fillStyle = needleColor;
+        ctx.shadowColor = needleColor;
+        ctx.shadowBlur = 12;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      // ═══════════════════════════════════════
+      // STRING GRID
+      // ═══════════════════════════════════════
+
+      function renderStringGrid() {
+        const grid = document.getElementById("string-grid");
+        grid.innerHTML = "";
+        const labels = ["6", "5", "4", "3", "2", "1"];
+        currentTuning.notes.forEach((note, i) => {
+          const btn = document.createElement("button");
+          btn.className =
+            "string-btn" + (i === selectedString ? " active" : "");
+          btn.innerHTML = `<span class="snum">${labels[i]}</span>${note}`;
+          btn.onclick = () => {
+            selectedString = i;
+            renderStringGrid();
+          };
+          grid.appendChild(btn);
+        });
+      }
+
+      // ═══════════════════════════════════════
+      // NOTE RANGES (right panel)
+      // ═══════════════════════════════════════
+
+      function renderNoteRanges() {
+        const el = document.getElementById("note-ranges");
+        el.innerHTML = "";
+        const labels = ["6th", "5th", "4th", "3rd", "2nd", "1st"];
+        const colors = [
+          "#ff00aa",
+          "#ff6b00",
+          "#ffb400",
+          "#00f5ff",
+          "#00ff88",
+          "#a040ff",
+        ];
+        currentTuning.notes.forEach((note, i) => {
+          const freq = noteToFreq(note);
+          const row = document.createElement("div");
+          row.className = "flex items-center gap-2";
+          row.innerHTML = `
+      <span style="font-size:10px;color:${colors[i]};width:28px;text-align:right;flex-shrink:0">${labels[i]}</span>
+      <span style="font-size:11px;color:var(--text);width:36px;flex-shrink:0">${note}</span>
+      <span style="font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums">${freq.toFixed(1)} Hz</span>
+    `;
+          el.appendChild(row);
+        });
+      }
+
+      // ═══════════════════════════════════════
+      // FREQ MAP (bottom bar)
+      // ═══════════════════════════════════════
+
+      function renderFreqMap() {
+        const el = document.getElementById("freq-map");
+        el.innerHTML = "";
+        const colors = [
+          "#ff00aa",
+          "#ff6b00",
+          "#ffb400",
+          "#00f5ff",
+          "#00ff88",
+          "#a040ff",
+        ];
+        const labels = ["6th", "5th", "4th", "3rd", "2nd", "1st"];
+
+        const minHz = 60,
+          maxHz = 1400;
+
+        currentTuning.notes.forEach((note, i) => {
+          const freq = noteToFreq(note);
+          const pct = (Math.log(freq / minHz) / Math.log(maxHz / minHz)) * 100;
+
+          const wrap = document.createElement("div");
+          wrap.className = "flex items-center gap-3";
+          wrap.innerHTML = `
+      <span style="font-size:10px;color:${colors[i]};width:28px;text-align:right;flex-shrink:0">${labels[i]}</span>
+      <div style="flex:1;position:relative;height:20px;background:var(--surface2);border:1px solid var(--border);border-radius:2px;overflow:hidden">
+        <div style="position:absolute;top:0;bottom:0;left:${pct.toFixed(1)}%;width:2px;background:${colors[i]};transform:translateX(-50%);box-shadow:0 0 6px ${colors[i]}"></div>
+        <span style="position:absolute;left:${Math.min(pct + 2, 80).toFixed(1)}%;top:50%;transform:translateY(-50%);font-size:9px;color:${colors[i]};white-space:nowrap">${note} ${freq.toFixed(0)}Hz</span>
+      </div>
+    `;
+          el.appendChild(wrap);
+        });
+
+        // Axis
+        const axis = document.createElement("div");
+        axis.className = "flex justify-between mt-1";
+        axis.innerHTML = `<span style="font-size:9px;color:var(--muted)">60Hz</span><span style="font-size:9px;color:var(--muted)">200Hz</span><span style="font-size:9px;color:var(--muted)">500Hz</span><span style="font-size:9px;color:var(--muted)">1400Hz</span>`;
+        el.appendChild(axis);
+      }
+
+      // ═══════════════════════════════════════
+      // MODE
+      // ═══════════════════════════════════════
+
+      function setMode(mode) {
+        detectionMode = mode;
+        document.getElementById("btn-auto").className =
+          mode === "auto"
+            ? "modal-btn modal-btn-primary"
+            : "modal-btn modal-btn-secondary";
+        document.getElementById("btn-manual").className =
+          mode === "manual"
+            ? "modal-btn modal-btn-primary"
+            : "modal-btn modal-btn-secondary";
+        document.getElementById("btn-auto").style.cssText =
+          "padding:4px 12px;font-size:11px";
+        document.getElementById("btn-manual").style.cssText =
+          "padding:4px 12px;font-size:11px";
+      }
+
+      // ═══════════════════════════════════════
+      // MODAL
+      // ═══════════════════════════════════════
+
+      function openModal() {
+        renderSavedTuningsList();
+        renderNewTuningInputs();
+        document.getElementById("modal-overlay").classList.add("open");
+      }
+
+      function closeModal() {
+        document.getElementById("modal-overlay").classList.remove("open");
+      }
+
+      function closeModalOutside(e) {
+        if (e.target === document.getElementById("modal-overlay")) closeModal();
+      }
+
+      function renderSavedTuningsList() {
+        const el = document.getElementById("saved-tunings-list");
+        el.innerHTML = "";
+        const all = getAllTunings();
+        all.forEach((t, i) => {
+          const isActive = t.name === currentTuning.name;
+          const isDefault = i < DEFAULT_TUNINGS.length;
+          const btn = document.createElement("div");
+          btn.className = "saved-tuning-btn" + (isActive ? " active" : "");
+          btn.innerHTML = `
+      <span style="flex:1;text-align:left">${t.name}</span>
+      <span style="color:var(--muted);font-size:10px">${t.notes.join(" ")}</span>
+      ${!isDefault ? `<span class="del-btn" data-idx="${i - DEFAULT_TUNINGS.length}">✕</span>` : ""}
+    `;
+          btn.addEventListener("click", (e) => {
+            if (e.target.classList.contains("del-btn")) return;
+            setTuning(t);
+            renderSavedTuningsList();
+          });
+          const delBtn = btn.querySelector(".del-btn");
+          if (delBtn) {
+            delBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              const idx = parseInt(delBtn.dataset.idx);
+              savedTunings.splice(idx, 1);
+              persistSaved();
+              if (currentTuning.name === t.name) setTuning(DEFAULT_TUNINGS[0]);
+              renderSavedTuningsList();
+            });
+          }
+          el.appendChild(btn);
+        });
+      }
+
+      function renderNewTuningInputs() {
+        const el = document.getElementById("new-tuning-inputs");
+        el.innerHTML = "";
+        const labels = ["6", "5", "4", "3", "2", "1"];
+        const defaults = ["E2", "A2", "D3", "G3", "B3", "E4"];
+        labels.forEach((lbl, i) => {
+          const wrap = document.createElement("div");
+          wrap.innerHTML = `
+      <div style="font-size:9px;color:var(--muted);margin-bottom:4px;text-align:center">${lbl}</div>
+      <input class="tuning-input" id="ni-${i}" value="${defaults[i]}" maxlength="4" style="text-align:center">
+    `;
+          el.appendChild(wrap);
+        });
+      }
+
+      function saveNewTuning() {
+        const name = document.getElementById("new-tuning-name").value.trim();
+        if (!name) {
+          alert("Please enter a tuning name.");
+          return;
+        }
+        const notes = [];
+        for (let i = 0; i < 6; i++) {
+          const v = (document.getElementById(`ni-${i}`)?.value || "").trim();
+          if (!v.match(/^[A-G]#?\d$/)) {
+            alert(`Invalid note for string ${6 - i}: use format like E2, A#3`);
+            return;
+          }
+          notes.push(v);
+        }
+        const t = { name, notes };
+        savedTunings.push(t);
+        persistSaved();
+        setTuning(t);
+        renderSavedTuningsList();
+      }
+
+      function setTuning(t) {
+        currentTuning = t;
+        persistActiveTuning();
+        document.getElementById("tuning-label").textContent = t.name;
+        renderStringGrid();
+        renderNoteRanges();
+        renderFreqMap();
+      }
+
+      // ═══════════════════════════════════════
+      // INIT
+      // ═══════════════════════════════════════
+
+      loadSaved();
+      loadActiveTuning();
+      document.getElementById("tuning-label").textContent = currentTuning.name;
+      renderStringGrid();
+      renderNoteRanges();
+      renderFreqMap();
+      drawGauge(0);
+
+      // Initial spectrogram placeholder
+      const specCanvas = document.getElementById("spectrogram");
+      function initSpec() {
+        const W = specCanvas.offsetWidth || 800;
+        specCanvas.width = W;
+        specCanvas.height = 180;
+        const ctx = specCanvas.getContext("2d");
+        ctx.fillStyle = "#0a0a0b";
+        ctx.fillRect(0, 0, W, 180);
+        ctx.fillStyle = "#242428";
+        ctx.font = "11px Space Mono, monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(
+          "Click START TUNER and allow microphone access",
+          W / 2,
+          95,
+        );
+      }
+      initSpec();
+      window.addEventListener("resize", () => {
+        if (!isRunning) initSpec();
+        drawGauge(smoothCents);
+      });
+    </script>
+  </body>
+</html>
