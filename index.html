@@ -792,6 +792,7 @@
 
       let audioCtx = null,
         analyser = null,
+        analyserViz = null,
         stream = null;
       let animFrame = null;
       let isRunning = false;
@@ -872,8 +873,13 @@
           const src = audioCtx.createMediaStreamSource(stream);
           analyser = audioCtx.createAnalyser();
           analyser.fftSize = 8192;
-          analyser.smoothingTimeConstant = 0.7;
+          analyser.smoothingTimeConstant = 0.0; // Must be 0 — smoothing corrupts time-domain data for YIN
           src.connect(analyser);
+          // Second analyser for spectrogram visuals — smoothed for aesthetics
+          analyserViz = audioCtx.createAnalyser();
+          analyserViz.fftSize = 8192;
+          analyserViz.smoothingTimeConstant = 0.75;
+          src.connect(analyserViz);
           isRunning = true;
           document.getElementById("start-btn").textContent = "STOP TUNER";
           document.getElementById("start-btn").classList.add("active");
@@ -889,7 +895,7 @@
         if (animFrame) cancelAnimationFrame(animFrame);
         if (stream) stream.getTracks().forEach((t) => t.stop());
         if (audioCtx) audioCtx.close();
-        audioCtx = analyser = stream = null;
+        audioCtx = analyser = analyserViz = stream = null;
         document.getElementById("start-btn").textContent = "START TUNER";
         document.getElementById("start-btn").classList.remove("active");
         document.getElementById("status-dot").classList.remove("on");
@@ -897,47 +903,78 @@
       }
 
       // ═══════════════════════════════════════
-      // PITCH DETECTION (autocorrelation)
+      // PITCH DETECTION — YIN algorithm
       // ═══════════════════════════════════════
 
       function detectPitch(buf, sampleRate) {
-        const SIZE = buf.length;
-        const MAX_SAMPLES = Math.floor(SIZE / 2);
-        let bestOffset = -1,
-          bestCorr = 0;
-        let lastCorr = 1,
-          foundGoodCorr = false;
-        const rmsThreshold = 0.015;
-
-        // RMS check
+        // RMS gate — reject silence
         let rms = 0;
-        for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
-        rms = Math.sqrt(rms / SIZE);
-        if (rms < rmsThreshold) return -1;
+        for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
+        rms = Math.sqrt(rms / buf.length);
+        if (rms < 0.01) return -1;
 
-        for (let offset = 0; offset < MAX_SAMPLES; offset++) {
-          let corr = 0;
-          for (let i = 0; i < MAX_SAMPLES; i++)
-            corr += buf[i] * buf[i + offset];
-          corr = (2 * corr) / (SIZE - offset);
-          if (corr > 0.9 && corr > lastCorr) {
-            foundGoodCorr = true;
-          } else if (foundGoodCorr && corr < lastCorr) {
-            if (corr > bestCorr) {
-              bestCorr = corr;
-              bestOffset = offset;
-            }
-            if (lastCorr > 0.98) break;
+        // Work on a 4096-sample window (good resolution for guitar 82Hz–1319Hz)
+        const W = Math.min(4096, Math.floor(buf.length / 2));
+        // Min/max lag bounds for guitar range: ~60Hz–1500Hz
+        const minLag = Math.floor(sampleRate / 1500);
+        const maxLag = Math.ceil(sampleRate / 60);
+
+        // Step 1: difference function  d(τ) = Σ (x[i] - x[i+τ])²
+        const diff = new Float32Array(maxLag + 1);
+        for (let tau = 1; tau <= maxLag; tau++) {
+          let sum = 0;
+          for (let i = 0; i < W; i++) {
+            const delta = buf[i] - buf[i + tau];
+            sum += delta * delta;
           }
-          lastCorr = corr;
+          diff[tau] = sum;
         }
 
-        if (bestOffset === -1) return -1;
-        // Parabolic interpolation
-        const y1 = bestOffset > 0 ? 0 : 0;
-        const y2 = bestCorr;
-        const y3 = bestOffset + 1 < MAX_SAMPLES ? 0 : 0;
-        return sampleRate / bestOffset;
+        // Step 2: cumulative mean normalised difference (CMND)
+        const cmnd = new Float32Array(maxLag + 1);
+        cmnd[0] = 1;
+        let runningSum = 0;
+        for (let tau = 1; tau <= maxLag; tau++) {
+          runningSum += diff[tau];
+          cmnd[tau] = runningSum === 0 ? 0 : (diff[tau] * tau) / runningSum;
+        }
+
+        // Step 3: find first dip below threshold
+        const threshold = 0.15;
+        let bestTau = -1;
+        for (let tau = minLag; tau <= maxLag; tau++) {
+          if (cmnd[tau] < threshold) {
+            // keep going while still falling
+            while (tau + 1 <= maxLag && cmnd[tau + 1] < cmnd[tau]) tau++;
+            bestTau = tau;
+            break;
+          }
+        }
+
+        // Fallback: pick global minimum if nothing found below threshold
+        if (bestTau === -1) {
+          let minVal = Infinity;
+          for (let tau = minLag; tau <= maxLag; tau++) {
+            if (cmnd[tau] < minVal) {
+              minVal = cmnd[tau];
+              bestTau = tau;
+            }
+          }
+          if (minVal > 0.35) return -1; // too uncertain
+        }
+
+        // Step 4: parabolic interpolation for sub-sample accuracy
+        if (bestTau > 0 && bestTau < maxLag) {
+          const s0 = cmnd[bestTau - 1];
+          const s1 = cmnd[bestTau];
+          const s2 = cmnd[bestTau + 1];
+          const denom = s0 - 2 * s1 + s2;
+          if (denom !== 0) {
+            bestTau += (0.5 * (s0 - s2)) / denom;
+          }
+        }
+
+        return sampleRate / bestTau;
       }
 
       // ═══════════════════════════════════════
@@ -952,17 +989,25 @@
         const timeBuf = new Float32Array(bufLen);
         analyser.getFloatTimeDomainData(timeBuf);
 
-        const freqBinCount = analyser.frequencyBinCount;
+        const freqBinCount = analyserViz.frequencyBinCount;
         const freqBuf = new Uint8Array(freqBinCount);
-        analyser.getByteFrequencyData(freqBuf);
+        analyserViz.getByteFrequencyData(freqBuf);
 
         // Pitch detection
         const freq = detectPitch(timeBuf, audioCtx.sampleRate);
 
-        // Smooth freq
+        // Smooth freq — snap on large jumps, gentle otherwise
         if (freq > 20) {
-          smoothFreq =
-            smoothFreq === 0 ? freq : smoothFreq * 0.85 + freq * 0.15;
+          if (smoothFreq === 0) {
+            smoothFreq = freq;
+          } else {
+            const ratio = freq / smoothFreq;
+            const snap = ratio > 1.06 || ratio < 0.94;
+            smoothFreq = snap ? freq : smoothFreq * 0.6 + freq * 0.4;
+          }
+        } else {
+          smoothFreq *= 0.92;
+          if (smoothFreq < 30) smoothFreq = 0;
         }
 
         // Find closest note
@@ -997,7 +1042,7 @@
         updateNoteDisplay(targetNote, smoothCents, smoothFreq, targetFreq);
 
         // Draw spectrogram
-        drawSpectrogram(freqBuf, analyser.sampleRate || 44100, freqBinCount);
+        drawSpectrogram(freqBuf, audioCtx.sampleRate, freqBinCount);
 
         // Draw gauge
         drawGauge(smoothCents);
